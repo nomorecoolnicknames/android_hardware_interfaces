@@ -82,6 +82,8 @@ private:
     // Helper function to append available[request|result|chars]Keys
     static void appendAvailableKeys(CameraMetadata &chars,
             int32_t keyTag, const Vector<int32_t>& appendKeys);
+    // Meizu MX6: RAW16/JPEG stream-configuration normalisation (CameraModule.cpp)
+    static void normalizeRawStreamConfigurations(int facing, CameraMetadata &chars);
     status_t filterOpenErrorCode(status_t err);
     camera_module_t *mModule;
     int mNumberOfCameras;
