@@ -1282,9 +1282,11 @@ Error HWC2On1Adapter::Display::set(hwc_display_contents_1& hwcContents) {
 
     // Close acquire fences on FRAMEBUFFER layers, since they will not be used
     // by HWC
+    bool hasClientLayers = false;
     for (size_t l = 0; l < numLayers - 1; ++l) {
         auto& layer = hwcContents.hwLayers[l];
         if (layer.compositionType == HWC_FRAMEBUFFER) {
+            hasClientLayers = true;
             ALOGV("Closing fence %d for layer %zd", layer.acquireFenceFd, l);
             close(layer.acquireFenceFd);
             layer.acquireFenceFd = -1;
@@ -1294,7 +1296,17 @@ Error HWC2On1Adapter::Display::set(hwc_display_contents_1& hwcContents) {
     auto& clientTargetLayer = hwcContents.hwLayers[numLayers - 1];
     if (clientTargetLayer.compositionType == HWC_FRAMEBUFFER_TARGET) {
         clientTargetLayer.handle = mClientTarget.getBuffer();
-        clientTargetLayer.acquireFenceFd = mClientTarget.getFence();
+        if (hasClientLayers) {
+            clientTargetLayer.acquireFenceFd = mClientTarget.getFence();
+        } else {
+            // With no FRAMEBUFFER layer the device does not read the
+            // framebuffer target, and mClientTarget still holds the signaled
+            // fence of the last client-composited frame. A device that never
+            // reads the target may not close its acquire fence either (the
+            // MediaTek HWC 1.5 blob does not), so a dup here would leak one
+            // fd per frame.
+            clientTargetLayer.acquireFenceFd = -1;
+        }
     } else {
         ALOGE("[%" PRIu64 "] set: last HWC layer wasn't FRAMEBUFFER_TARGET",
                 mId);
