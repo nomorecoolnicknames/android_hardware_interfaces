@@ -53,7 +53,7 @@ using AudioInputFlags = CoreUtils::AudioInputFlags;
 using AudioOutputFlags = CoreUtils::AudioOutputFlags;
 
 struct Device : public IDevice, public ParametersUtil {
-    explicit Device(audio_hw_device_t* device);
+    explicit Device(audio_hw_device_t* device, bool hasNougatAbi = false);
 
     // Methods from ::android::hardware::audio::CPP_VERSION::IDevice follow.
     Return<Result> initCheck() override;
@@ -173,9 +173,24 @@ struct Device : public IDevice, public ParametersUtil {
 
     uint32_t version() const { return mDevice->common.version; }
 
+    // True for a legacy HAL built against the Android 7 (Nougat) hardware/audio.h, which this
+    // header only matches up to the Nougat fields. Every method that would read a field such a
+    // HAL does not have, or has at another offset, reports NOT_SUPPORTED (or does nothing)
+    // without touching the field:
+    //  - audio_hw_device: Android 9 inserted get_microphones() in front of dump(), so from
+    //    get_microphones on, each field holds the HAL's function for the field declared after
+    //    it here: get_microphones holds dump(), get_master_mute holds create_audio_patch(),
+    //    and so on. add/remove_device_effect need API 3.1, which no Nougat HAL reports.
+    //  - audio_stream_out / audio_stream_in end at get_presentation_position() /
+    //    get_capture_position(). The MMAP fields and all later ones lie past their end.
+    // Audio patches are reported as unsupported, so AudioFlinger routes the streams with
+    // set_parameters("routing=..."), as for a pre-3.0 HAL.
+    bool hasNougatAbi() const { return mHasNougatAbi; }
+
   private:
     bool mIsClosed;
     audio_hw_device_t* mDevice;
+    const bool mHasNougatAbi;
     int mOpenedStreamsCount = 0;
 
     virtual ~Device();

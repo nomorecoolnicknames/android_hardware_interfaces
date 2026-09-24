@@ -23,6 +23,8 @@
 #include <cmath>
 #endif
 
+#include <cutils/properties.h>
+
 namespace android {
 namespace hardware {
 namespace audio {
@@ -33,7 +35,13 @@ namespace util {
 using namespace ::android::hardware::audio::CORE_TYPES_CPP_VERSION::implementation::util;
 }
 
-PrimaryDevice::PrimaryDevice(audio_hw_device_t* device) : mDevice(new Device(device)) {}
+// ro.vendor.audio.legacy_nougat_abi marks the primary legacy HAL as a Nougat build, see
+// Device::hasNougatAbi(). The other modules loaded by this service are not affected.
+PrimaryDevice::PrimaryDevice(audio_hw_device_t* device)
+    : mDevice(new Device(device, property_get_bool("ro.vendor.audio.legacy_nougat_abi", false))) {
+    ALOGI_IF(mDevice->hasNougatAbi(),
+             "Primary HAL has the Nougat audio.h layout, post-Nougat methods are not supported");
+}
 
 PrimaryDevice::~PrimaryDevice() {
     // Do not call mDevice->close here. If there are any unclosed streams,

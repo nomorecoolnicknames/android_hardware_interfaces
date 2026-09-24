@@ -306,20 +306,32 @@ Return<Result> StreamIn::setParameters(const hidl_vec<ParameterValue>& context,
 }
 #endif
 
+// A Nougat audio_stream_in ends at get_capture_position(): for such a HAL
+// (Device::hasNougatAbi()) the MMAP fields and all fields added after them are not read.
 Return<Result> StreamIn::start() {
+    if (mDevice->hasNougatAbi()) return Result::NOT_SUPPORTED;
     return mStreamMmap->start();
 }
 
 Return<Result> StreamIn::stop() {
+    if (mDevice->hasNougatAbi()) return Result::NOT_SUPPORTED;
     return mStreamMmap->stop();
 }
 
 Return<void> StreamIn::createMmapBuffer(int32_t minSizeFrames, createMmapBuffer_cb _hidl_cb) {
+    if (mDevice->hasNougatAbi()) {
+        _hidl_cb(Result::NOT_SUPPORTED, MmapBufferInfo());
+        return Void();
+    }
     return mStreamMmap->createMmapBuffer(minSizeFrames, audio_stream_in_frame_size(mStream),
                                          _hidl_cb);
 }
 
 Return<void> StreamIn::getMmapPosition(getMmapPosition_cb _hidl_cb) {
+    if (mDevice->hasNougatAbi()) {
+        _hidl_cb(Result::NOT_SUPPORTED, MmapPosition());
+        return Void();
+    }
     return mStreamMmap->getMmapPosition(_hidl_cb);
 }
 
@@ -529,7 +541,7 @@ Result StreamIn::doUpdateSinkMetadataV7(const SinkMetadata& sinkMetadata) {
 
 #if MAJOR_VERSION <= 6
 Return<void> StreamIn::updateSinkMetadata(const SinkMetadata& sinkMetadata) {
-    if (mStream->update_sink_metadata == nullptr) {
+    if (mDevice->hasNougatAbi() || mStream->update_sink_metadata == nullptr) {
         return Void();  // not supported by the HAL
     }
     (void)doUpdateSinkMetadata(sinkMetadata);
@@ -538,7 +550,7 @@ Return<void> StreamIn::updateSinkMetadata(const SinkMetadata& sinkMetadata) {
 #elif MAJOR_VERSION >= 7
 Return<Result> StreamIn::updateSinkMetadata(const SinkMetadata& sinkMetadata) {
     if (mDevice->version() < AUDIO_DEVICE_API_VERSION_3_2) {
-        if (mStream->update_sink_metadata == nullptr) {
+        if (mDevice->hasNougatAbi() || mStream->update_sink_metadata == nullptr) {
             return Result::NOT_SUPPORTED;
         }
         return doUpdateSinkMetadata(sinkMetadata);
@@ -557,7 +569,7 @@ Return<void> StreamIn::getActiveMicrophones(getActiveMicrophones_cb _hidl_cb) {
     audio_microphone_characteristic_t mic_array[AUDIO_MICROPHONE_MAX_COUNT];
 
     hidl_vec<MicrophoneInfo> microphones;
-    if (mStream->get_active_microphones != NULL &&
+    if (!mDevice->hasNougatAbi() && mStream->get_active_microphones != NULL &&
         mStream->get_active_microphones(mStream, &mic_array[0], &actual_mics) == 0) {
         microphones.resize(actual_mics);
         for (size_t i = 0; i < actual_mics; ++i) {
@@ -573,7 +585,7 @@ Return<void> StreamIn::getActiveMicrophones(getActiveMicrophones_cb _hidl_cb) {
 
 #if MAJOR_VERSION >= 5
 Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
-    if (mStream->set_microphone_direction == nullptr) {
+    if (mDevice->hasNougatAbi() || mStream->set_microphone_direction == nullptr) {
         return Result::NOT_SUPPORTED;
     }
     if (!common::utils::isValidHidlEnum(direction)) {
@@ -587,7 +599,7 @@ Return<Result> StreamIn::setMicrophoneDirection(MicrophoneDirection direction) {
 }
 
 Return<Result> StreamIn::setMicrophoneFieldDimension(float zoom) {
-    if (mStream->set_microphone_field_dimension == nullptr) {
+    if (mDevice->hasNougatAbi() || mStream->set_microphone_field_dimension == nullptr) {
         return Result::NOT_SUPPORTED;
     }
     if (std::isnan(zoom) || zoom < -1 || zoom > 1) {

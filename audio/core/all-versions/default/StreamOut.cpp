@@ -569,20 +569,32 @@ Return<void> StreamOut::getPresentationPosition(getPresentationPosition_cb _hidl
     return Void();
 }
 
+// A Nougat audio_stream_out ends at get_presentation_position(): for such a HAL
+// (Device::hasNougatAbi()) the MMAP fields and all fields added after them are not read.
 Return<Result> StreamOut::start() {
+    if (mDevice->hasNougatAbi()) return Result::NOT_SUPPORTED;
     return mStreamMmap->start();
 }
 
 Return<Result> StreamOut::stop() {
+    if (mDevice->hasNougatAbi()) return Result::NOT_SUPPORTED;
     return mStreamMmap->stop();
 }
 
 Return<void> StreamOut::createMmapBuffer(int32_t minSizeFrames, createMmapBuffer_cb _hidl_cb) {
+    if (mDevice->hasNougatAbi()) {
+        _hidl_cb(Result::NOT_SUPPORTED, MmapBufferInfo());
+        return Void();
+    }
     return mStreamMmap->createMmapBuffer(minSizeFrames, audio_stream_out_frame_size(mStream),
                                          _hidl_cb);
 }
 
 Return<void> StreamOut::getMmapPosition(getMmapPosition_cb _hidl_cb) {
+    if (mDevice->hasNougatAbi()) {
+        _hidl_cb(Result::NOT_SUPPORTED, MmapPosition());
+        return Void();
+    }
     return mStreamMmap->getMmapPosition(_hidl_cb);
 }
 
@@ -638,7 +650,7 @@ Result StreamOut::doUpdateSourceMetadataV7(const SourceMetadata& sourceMetadata)
 
 #if MAJOR_VERSION <= 6
 Return<void> StreamOut::updateSourceMetadata(const SourceMetadata& sourceMetadata) {
-    if (mStream->update_source_metadata == nullptr) {
+    if (mDevice->hasNougatAbi() || mStream->update_source_metadata == nullptr) {
         return Void();  // not supported by the HAL
     }
     (void)doUpdateSourceMetadata(sourceMetadata);
@@ -647,7 +659,7 @@ Return<void> StreamOut::updateSourceMetadata(const SourceMetadata& sourceMetadat
 #elif MAJOR_VERSION >= 7
 Return<Result> StreamOut::updateSourceMetadata(const SourceMetadata& sourceMetadata) {
     if (mDevice->version() < AUDIO_DEVICE_API_VERSION_3_2) {
-        if (mStream->update_source_metadata == nullptr) {
+        if (mDevice->hasNougatAbi() || mStream->update_source_metadata == nullptr) {
             return Result::NOT_SUPPORTED;
         }
         return doUpdateSourceMetadata(sourceMetadata);
@@ -668,7 +680,7 @@ Return<Result> StreamOut::selectPresentation(int32_t /*presentationId*/, int32_t
 #if MAJOR_VERSION >= 6
 Return<void> StreamOut::getDualMonoMode(getDualMonoMode_cb _hidl_cb) {
     audio_dual_mono_mode_t mode = AUDIO_DUAL_MONO_MODE_OFF;
-    Result retval = mStream->get_dual_mono_mode != nullptr
+    Result retval = !mDevice->hasNougatAbi() && mStream->get_dual_mono_mode != nullptr
                             ? Stream::analyzeStatus("get_dual_mono_mode",
                                                     mStream->get_dual_mono_mode(mStream, &mode))
                             : Result::NOT_SUPPORTED;
@@ -677,7 +689,7 @@ Return<void> StreamOut::getDualMonoMode(getDualMonoMode_cb _hidl_cb) {
 }
 
 Return<Result> StreamOut::setDualMonoMode(DualMonoMode mode) {
-    return mStream->set_dual_mono_mode != nullptr
+    return !mDevice->hasNougatAbi() && mStream->set_dual_mono_mode != nullptr
                    ? Stream::analyzeStatus(
                              "set_dual_mono_mode",
                              mStream->set_dual_mono_mode(mStream,
@@ -687,7 +699,7 @@ Return<Result> StreamOut::setDualMonoMode(DualMonoMode mode) {
 
 Return<void> StreamOut::getAudioDescriptionMixLevel(getAudioDescriptionMixLevel_cb _hidl_cb) {
     float leveldB = -std::numeric_limits<float>::infinity();
-    Result retval = mStream->get_audio_description_mix_level != nullptr
+    Result retval = !mDevice->hasNougatAbi() && mStream->get_audio_description_mix_level != nullptr
                             ? Stream::analyzeStatus(
                                       "get_audio_description_mix_level",
                                       mStream->get_audio_description_mix_level(mStream, &leveldB))
@@ -697,7 +709,7 @@ Return<void> StreamOut::getAudioDescriptionMixLevel(getAudioDescriptionMixLevel_
 }
 
 Return<Result> StreamOut::setAudioDescriptionMixLevel(float leveldB) {
-    return mStream->set_audio_description_mix_level != nullptr
+    return !mDevice->hasNougatAbi() && mStream->set_audio_description_mix_level != nullptr
                    ? Stream::analyzeStatus(
                              "set_audio_description_mix_level",
                              mStream->set_audio_description_mix_level(mStream, leveldB))
@@ -707,7 +719,7 @@ Return<Result> StreamOut::setAudioDescriptionMixLevel(float leveldB) {
 Return<void> StreamOut::getPlaybackRateParameters(getPlaybackRateParameters_cb _hidl_cb) {
     audio_playback_rate_t rate = AUDIO_PLAYBACK_RATE_INITIALIZER;
     Result retval =
-            mStream->get_playback_rate_parameters != nullptr
+            !mDevice->hasNougatAbi() && mStream->get_playback_rate_parameters != nullptr
                     ? Stream::analyzeStatus("get_playback_rate_parameters",
                                             mStream->get_playback_rate_parameters(mStream, &rate))
                     : Result::NOT_SUPPORTED;
@@ -722,14 +734,16 @@ Return<Result> StreamOut::setPlaybackRateParameters(const PlaybackRate& playback
             playbackRate.speed, playbackRate.pitch,
             static_cast<audio_timestretch_stretch_mode_t>(playbackRate.timestretchMode),
             static_cast<audio_timestretch_fallback_mode_t>(playbackRate.fallbackMode)};
-    return mStream->set_playback_rate_parameters != nullptr
+    return !mDevice->hasNougatAbi() && mStream->set_playback_rate_parameters != nullptr
                    ? Stream::analyzeStatus("set_playback_rate_parameters",
                                            mStream->set_playback_rate_parameters(mStream, &rate))
                    : Result::NOT_SUPPORTED;
 }
 
 Return<Result> StreamOut::setEventCallback(const sp<IStreamOutEventCallback>& callback) {
-    if (mStream->set_event_callback == nullptr) return Result::NOT_SUPPORTED;
+    if (mDevice->hasNougatAbi() || mStream->set_event_callback == nullptr) {
+        return Result::NOT_SUPPORTED;
+    }
     int result = mStream->set_event_callback(mStream, StreamOut::asyncEventCallback, this);
     if (result == 0) {
         mEventCallback = callback;
@@ -764,7 +778,7 @@ int StreamOut::asyncEventCallback(stream_event_callback_type_t event, void* para
 
 #if MAJOR_VERSION == 7 && MINOR_VERSION == 1
 Return<Result> StreamOut::setLatencyMode(LatencyMode mode) {
-    return mStream->set_latency_mode != nullptr
+    return !mDevice->hasNougatAbi() && mStream->set_latency_mode != nullptr
                    ? Stream::analyzeStatus(
                              "set_latency_mode",
                              mStream->set_latency_mode(mStream,
@@ -778,7 +792,7 @@ Return<void> StreamOut::getRecommendedLatencyModes(getRecommendedLatencyModes_cb
     size_t num_modes = AUDIO_LATENCY_MODE_CNT;
     audio_latency_mode_t modes[AUDIO_LATENCY_MODE_CNT];
 
-    if (mStream->get_recommended_latency_modes != nullptr &&
+    if (!mDevice->hasNougatAbi() && mStream->get_recommended_latency_modes != nullptr &&
         mStream->get_recommended_latency_modes(mStream, &modes[0], &num_modes) == 0) {
         if (num_modes == 0 || num_modes > AUDIO_LATENCY_MODE_CNT) {
             ALOGW("%s invalid number of modes returned: %zu", __func__, num_modes);
@@ -818,7 +832,9 @@ void StreamOut::latencyModeCallback(audio_latency_mode_t* modes, size_t num_mode
 
 Return<Result> StreamOut::setLatencyModeCallback(
         const sp<IStreamOutLatencyModeCallback>& callback) {
-    if (mStream->set_latency_mode_callback == nullptr) return Result::NOT_SUPPORTED;
+    if (mDevice->hasNougatAbi() || mStream->set_latency_mode_callback == nullptr) {
+        return Result::NOT_SUPPORTED;
+    }
     int result = mStream->set_latency_mode_callback(mStream, StreamOut::latencyModeCallback, this);
     if (result == 0) {
         mLatencyModeCallback = callback;

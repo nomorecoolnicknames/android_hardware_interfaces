@@ -47,7 +47,8 @@ namespace util {
 using namespace ::android::hardware::audio::CORE_TYPES_CPP_VERSION::implementation::util;
 }
 
-Device::Device(audio_hw_device_t* device) : mIsClosed(false), mDevice(device) {}
+Device::Device(audio_hw_device_t* device, bool hasNougatAbi)
+    : mIsClosed(false), mDevice(device), mHasNougatAbi(hasNougatAbi) {}
 
 Device::~Device() {
     (void)doClose();
@@ -121,7 +122,8 @@ Return<void> Device::getMicMute(getMicMute_cb _hidl_cb) {
 
 Return<Result> Device::setMasterMute(bool mute) {
     Result retval(Result::NOT_SUPPORTED);
-    if (mDevice->set_master_mute != NULL) {
+    // In a Nougat HAL this field is get_master_mute(), see hasNougatAbi().
+    if (!mHasNougatAbi && mDevice->set_master_mute != NULL) {
         retval = analyzeStatus("set_master_mute", mDevice->set_master_mute(mDevice, mute),
                                {ENOSYS} /*ignore*/);
     }
@@ -131,7 +133,8 @@ Return<Result> Device::setMasterMute(bool mute) {
 Return<void> Device::getMasterMute(getMasterMute_cb _hidl_cb) {
     Result retval(Result::NOT_SUPPORTED);
     bool mute = false;
-    if (mDevice->get_master_mute != NULL) {
+    // In a Nougat HAL this field is create_audio_patch(), see hasNougatAbi().
+    if (!mHasNougatAbi && mDevice->get_master_mute != NULL) {
         retval = analyzeStatus("get_master_mute", mDevice->get_master_mute(mDevice, &mute),
                                {ENOSYS} /*ignore*/);
     }
@@ -354,7 +357,8 @@ Return<void> Device::openOutputStream_7_1(int32_t ioHandle, const DeviceAddress&
 #endif  // V7.1
 
 Return<bool> Device::supportsAudioPatches() {
-    return version() >= AUDIO_DEVICE_API_VERSION_3_0;
+    // A Nougat HAL can be 3.0, but its patch functions are not where this header reads them.
+    return !mHasNougatAbi && version() >= AUDIO_DEVICE_API_VERSION_3_0;
 }
 
 Return<void> Device::createAudioPatch(const hidl_vec<AudioPortConfig>& sources,
@@ -369,7 +373,7 @@ std::tuple<Result, AudioPatchHandle> Device::createOrUpdateAudioPatch(
         AudioPatchHandle patch, const hidl_vec<AudioPortConfig>& sources,
         const hidl_vec<AudioPortConfig>& sinks) {
     Result retval(Result::NOT_SUPPORTED);
-    if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+    if (!mHasNougatAbi && version() >= AUDIO_DEVICE_API_VERSION_3_0) {
         audio_patch_handle_t halPatch = static_cast<audio_patch_handle_t>(patch);
         std::unique_ptr<audio_port_config[]> halSources;
         if (status_t status = HidlUtils::audioPortConfigsToHal(sources, &halSources);
@@ -392,7 +396,7 @@ std::tuple<Result, AudioPatchHandle> Device::createOrUpdateAudioPatch(
 }
 
 Return<Result> Device::releaseAudioPatch(int32_t patch) {
-    if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+    if (!mHasNougatAbi && version() >= AUDIO_DEVICE_API_VERSION_3_0) {
         return analyzeStatus(
             "release_audio_patch",
             mDevice->release_audio_patch(mDevice, static_cast<audio_patch_handle_t>(patch)));
@@ -428,7 +432,9 @@ Return<void> Device::getAudioPortImpl(const AudioPort& port, getAudioPort_cb _hi
 
 #if MAJOR_VERSION <= 6
 Return<void> Device::getAudioPort(const AudioPort& port, getAudioPort_cb _hidl_cb) {
-    return getAudioPortImpl(port, _hidl_cb, mDevice->get_audio_port, "get_audio_port");
+    // In a Nougat HAL this field is set_audio_port_config(), see hasNougatAbi().
+    return getAudioPortImpl(port, _hidl_cb, mHasNougatAbi ? nullptr : mDevice->get_audio_port,
+                            "get_audio_port");
 }
 #else
 Return<void> Device::getAudioPort(const AudioPort& port, getAudioPort_cb _hidl_cb) {
@@ -436,13 +442,15 @@ Return<void> Device::getAudioPort(const AudioPort& port, getAudioPort_cb _hidl_c
         // get_audio_port_v7 is mandatory if legacy HAL support this API version.
         return getAudioPortImpl(port, _hidl_cb, mDevice->get_audio_port_v7, "get_audio_port_v7");
     } else {
-        return getAudioPortImpl(port, _hidl_cb, mDevice->get_audio_port, "get_audio_port");
+        // In a Nougat HAL this field is set_audio_port_config(), see hasNougatAbi().
+        return getAudioPortImpl(port, _hidl_cb, mHasNougatAbi ? nullptr : mDevice->get_audio_port,
+                                "get_audio_port");
     }
 }
 #endif
 
 Return<Result> Device::setAudioPortConfig(const AudioPortConfig& config) {
-    if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+    if (!mHasNougatAbi && version() >= AUDIO_DEVICE_API_VERSION_3_0) {
         struct audio_port_config halPortConfig;
         if (status_t status = HidlUtils::audioPortConfigToHal(config, &halPortConfig);
             status != NO_ERROR) {
@@ -525,7 +533,12 @@ Return<void> Device::debug(const hidl_handle& fd, const hidl_vec<hidl_string>& o
             write(fd0, s.c_str(), s.size());
         }
 
-        analyzeStatus("dump", mDevice->dump(mDevice, fd0));
+        if (mHasNougatAbi) {
+            // In a Nougat HAL this field is set_master_mute(), see hasNougatAbi().
+            dprintf(fd0, "\nLegacy HAL has the Nougat audio.h layout, its dump() is not called\n");
+        } else {
+            analyzeStatus("dump", mDevice->dump(mDevice, fd0));
+        }
     }
     return Void();
 }
@@ -537,7 +550,8 @@ Return<void> Device::getMicrophones(getMicrophones_cb _hidl_cb) {
     audio_microphone_characteristic_t mic_array[AUDIO_MICROPHONE_MAX_COUNT];
 
     hidl_vec<MicrophoneInfo> microphones;
-    if (mDevice->get_microphones != NULL &&
+    // In a Nougat HAL this field is dump(), see hasNougatAbi().
+    if (!mHasNougatAbi && mDevice->get_microphones != NULL &&
         mDevice->get_microphones(mDevice, &mic_array[0], &actual_mics) == 0) {
         microphones.resize(actual_mics);
         for (size_t i = 0; i < actual_mics; ++i) {
