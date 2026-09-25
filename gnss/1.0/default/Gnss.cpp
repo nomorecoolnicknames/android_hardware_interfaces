@@ -260,8 +260,15 @@ void Gnss::nmeaCb(GpsUtcTime timestamp, const char* nmea, int length) {
         return;
     }
 
-    android::hardware::hidl_string nmeaString;
-    nmeaString.setToExternal(nmea, length);
+    // MediaTek gps.mt6797.so (Nougat) passes NMEA without a NUL at [length];
+    // since Android 10 hidl_string::setToExternal CHECKs data[size] == '\0'
+    // and aborted the HAL every ~1.5 s (m95 LOS20 #18, tombstones 34-47).
+    // Copy instead -- the port of 18.1 fb6e82d.
+    if (nmea == nullptr || length < 0) {
+        ALOGE("%s: invalid NMEA buffer", __func__);
+        return;
+    }
+    android::hardware::hidl_string nmeaString(std::string(nmea, length));
     auto ret = sGnssCbIface->gnssNmeaCb(timestamp, nmeaString);
     if (!ret.isOk()) {
         ALOGE("%s: Unable to invoke callback", __func__);
