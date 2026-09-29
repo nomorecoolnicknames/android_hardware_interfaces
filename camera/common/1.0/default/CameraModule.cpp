@@ -48,7 +48,11 @@ void CameraModule::deriveCameraCharacteristicsKeys(
         chars.update(ANDROID_CONTROL_AWB_LOCK_AVAILABLE, &data, /*count*/1);
         controlModes.push(ANDROID_CONTROL_MODE_AUTO);
         camera_metadata_entry entry = chars.find(ANDROID_CONTROL_AVAILABLE_SCENE_MODES);
-        if (entry.count > 1 || entry.data.u8[0] != ANDROID_CONTROL_SCENE_MODE_DISABLED) {
+        // A HAL that does not publish the key at all used to crash here: an
+        // absent entry has count 0 and data NULL (Meizu M5c, MTK HAL3.2 with
+        // sparse static metadata, provider SIGSEGV on every start).
+        if (entry.count > 1 ||
+            (entry.count == 1 && entry.data.u8[0] != ANDROID_CONTROL_SCENE_MODE_DISABLED)) {
             controlModes.push(ANDROID_CONTROL_MODE_USE_SCENE_MODE);
         }
 
