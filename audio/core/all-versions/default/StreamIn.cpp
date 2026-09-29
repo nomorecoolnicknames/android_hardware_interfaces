@@ -148,7 +148,8 @@ bool ReadThread::threadLoop() {
 StreamIn::StreamIn(const sp<Device>& device, audio_stream_in_t* stream)
     : mDevice(device),
       mStream(stream),
-      mStreamCommon(new Stream(true /*isInput*/, &stream->common)),
+      mStreamCommon(new Stream(true /*isInput*/, &stream->common,
+                               device->hasNougatAbi() /*dropEmptyParameters*/)),
       mStreamMmap(new StreamMmap<audio_stream_in_t>(stream)),
       mEfGroup(nullptr),
       mStopReadThread(false) {}

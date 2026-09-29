@@ -44,7 +44,8 @@ namespace util {
 using namespace ::android::hardware::audio::CORE_TYPES_CPP_VERSION::implementation::util;
 }
 
-Stream::Stream(bool isInput, audio_stream_t* stream) : mIsInput(isInput), mStream(stream) {
+Stream::Stream(bool isInput, audio_stream_t* stream, bool dropEmptyParameters)
+    : mIsInput(isInput), mStream(stream), mDropEmptyParameters(dropEmptyParameters) {
     (void)mIsInput;  // prevent 'unused field' warnings in pre-V7 versions.
 }
 
@@ -68,6 +69,24 @@ char* Stream::halGetParameters(const char* keys) {
 }
 
 int Stream::halSetParameters(const char* keysAndValues) {
+    if (mDropEmptyParameters) {
+        // Since Android 9 the policy gives a built-in mic without an address the address
+        // "bottom" (AUDIO_BOTTOM_MICROPHONE_ADDRESS; "back" for the back mic), and a HAL
+        // without audio patches is routed with the device address as a bare key:
+        // "bottom=;input_source=1;routing=-2147483644". A Nougat HAL never saw such a key; the
+        // MTK one keeps it as unconsumed and fails set_parameters(), so the input patch is
+        // not created and startInput() returns BAD_VALUE (m5c, 2026-09-29). Drop keys that
+        // carry no value; everything else is passed on as is.
+        AudioParameter params{String8(keysAndValues)};
+        String8 key, value;
+        for (size_t i = params.size(); i > 0; --i) {
+            if (params.getAt(i - 1, key, value) == OK && value.isEmpty()) {
+                ALOGV("%s: dropping \"%s=\" for the Nougat HAL", __func__, key.string());
+                params.remove(key);
+            }
+        }
+        return mStream->set_parameters(mStream, params.toString().string());
+    }
     return mStream->set_parameters(mStream, keysAndValues);
 }
 

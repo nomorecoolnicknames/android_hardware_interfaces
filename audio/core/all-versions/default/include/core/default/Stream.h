@@ -53,7 +53,9 @@ using namespace ::android::hardware::audio::CORE_TYPES_CPP_VERSION;
 using namespace ::android::hardware::audio::CPP_VERSION;
 
 struct Stream : public IStream, public ParametersUtil {
-    Stream(bool isInput, audio_stream_t* stream);
+    // dropEmptyParameters: drop "key=" entries (empty value) before set_parameters(), see
+    // halSetParameters().  StreamIn sets it for a Nougat HAL (Device::hasNougatAbi()).
+    Stream(bool isInput, audio_stream_t* stream, bool dropEmptyParameters = false);
 
     /** 1GiB is the maximum buffer size the HAL client is allowed to request.
      * This value has been chosen to be under SIZE_MAX and still big enough
@@ -124,6 +126,7 @@ struct Stream : public IStream, public ParametersUtil {
    private:
      const bool mIsInput;
      audio_stream_t* mStream;
+     const bool mDropEmptyParameters;
 
      virtual ~Stream();
 
