@@ -128,8 +128,8 @@ struct StreamIn : public IStreamIn {
     Return<Result> setMicrophoneDirection(MicrophoneDirection direction) override;
     Return<Result> setMicrophoneFieldDimension(float zoom) override;
 #endif
-    static Result getCapturePositionImpl(audio_stream_in_t* stream, uint64_t* frames,
-                                         uint64_t* time);
+    static Result getCapturePositionImpl(audio_stream_in_t* stream, bool hasCapturePosition,
+                                         uint64_t* frames, uint64_t* time);
 
   private:
 #if MAJOR_VERSION >= 4
@@ -143,6 +143,8 @@ struct StreamIn : public IStreamIn {
     audio_stream_in_t* mStream;
     const sp<Stream> mStreamCommon;
     const sp<StreamMmap<audio_stream_in_t>> mStreamMmap;
+    // False if the HAL has no usable get_capture_position(), see halHasCapturePosition().
+    const bool mHasCapturePosition;
     std::unique_ptr<CommandMQ> mCommandMQ;
     std::unique_ptr<DataMQ> mDataMQ;
     std::unique_ptr<StatusMQ> mStatusMQ;

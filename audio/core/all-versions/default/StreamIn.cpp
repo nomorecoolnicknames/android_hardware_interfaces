@@ -28,6 +28,7 @@
 #include <hardware/audio.h>
 #include <util/CoreUtils.h>
 #include <utils/Trace.h>
+#include <dlfcn.h>
 #include <cmath>
 #include <memory>
 
@@ -48,11 +49,13 @@ namespace {
 class ReadThread : public Thread {
    public:
     // ReadThread's lifespan never exceeds StreamIn's lifespan.
-    ReadThread(std::atomic<bool>* stop, audio_stream_in_t* stream, StreamIn::CommandMQ* commandMQ,
-               StreamIn::DataMQ* dataMQ, StreamIn::StatusMQ* statusMQ, EventFlag* efGroup)
+    ReadThread(std::atomic<bool>* stop, audio_stream_in_t* stream, bool hasCapturePosition,
+               StreamIn::CommandMQ* commandMQ, StreamIn::DataMQ* dataMQ,
+               StreamIn::StatusMQ* statusMQ, EventFlag* efGroup)
         : Thread(false /*canCallJava*/),
           mStop(stop),
           mStream(stream),
+          mHasCapturePosition(hasCapturePosition),
           mCommandMQ(commandMQ),
           mDataMQ(dataMQ),
           mStatusMQ(statusMQ),
@@ -67,6 +70,7 @@ class ReadThread : public Thread {
    private:
     std::atomic<bool>* mStop;
     audio_stream_in_t* mStream;
+    const bool mHasCapturePosition;
     StreamIn::CommandMQ* mCommandMQ;
     StreamIn::DataMQ* mDataMQ;
     StreamIn::StatusMQ* mStatusMQ;
@@ -105,7 +109,8 @@ void ReadThread::doRead() {
 
 void ReadThread::doGetCapturePosition() {
     mStatus.retval = StreamIn::getCapturePositionImpl(
-        mStream, &mStatus.reply.capturePosition.frames, &mStatus.reply.capturePosition.time);
+        mStream, mHasCapturePosition, &mStatus.reply.capturePosition.frames,
+        &mStatus.reply.capturePosition.time);
 }
 
 bool ReadThread::threadLoop() {
@@ -143,6 +148,24 @@ bool ReadThread::threadLoop() {
     return false;
 }
 
+// A Nougat HAL may also predate get_capture_position(): the MTK audio.primary.mt6737m.so of
+// the Meizu M5c (Flyme 6, Android 7) allocates an audio_stream_in that ends at
+// get_input_frames_lost() and keeps the pointer to its C++ stream in the next word, where this
+// header reads get_capture_position(). Calling it jumps into the heap (SIGSEGV in the read
+// thread on the first capture, m5c 2026-10-05). A real function lies in a loaded library, so for
+// a Nougat HAL the field is only used if dladdr() places it in one.
+bool halHasCapturePosition(const sp<Device>& device, audio_stream_in_t* stream) {
+    if (stream->get_capture_position == nullptr) return false;
+    if (!device->hasNougatAbi()) return true;
+    Dl_info info;
+    if (dladdr(reinterpret_cast<const void*>(stream->get_capture_position), &info) != 0) {
+        return true;
+    }
+    ALOGW("Nougat HAL input stream has no get_capture_position(), the field is %p",
+          reinterpret_cast<const void*>(stream->get_capture_position));
+    return false;
+}
+
 }  // namespace
 
 StreamIn::StreamIn(const sp<Device>& device, audio_stream_in_t* stream)
@@ -151,6 +174,7 @@ StreamIn::StreamIn(const sp<Device>& device, audio_stream_in_t* stream)
       mStreamCommon(new Stream(true /*isInput*/, &stream->common,
                                device->hasNougatAbi() /*dropEmptyParameters*/)),
       mStreamMmap(new StreamMmap<audio_stream_in_t>(stream)),
+      mHasCapturePosition(halHasCapturePosition(device, stream)),
       mEfGroup(nullptr),
       mStopReadThread(false) {}
 
@@ -430,8 +454,9 @@ Return<void> StreamIn::prepareForReading(uint32_t frameSize, uint32_t framesCoun
 
     // Create and launch the thread.
     auto tempReadThread =
-            sp<ReadThread>::make(&mStopReadThread, mStream, tempCommandMQ.get(), tempDataMQ.get(),
-                                 tempStatusMQ.get(), tempElfGroup.get());
+            sp<ReadThread>::make(&mStopReadThread, mStream, mHasCapturePosition,
+                                 tempCommandMQ.get(), tempDataMQ.get(), tempStatusMQ.get(),
+                                 tempElfGroup.get());
     if (!tempReadThread->init()) {
         ALOGW("failed to start reader thread: %s", strerror(-status));
         sendError(Result::INVALID_ARGUMENTS);
@@ -465,13 +490,13 @@ Return<uint32_t> StreamIn::getInputFramesLost() {
 }
 
 // static
-Result StreamIn::getCapturePositionImpl(audio_stream_in_t* stream, uint64_t* frames,
-                                        uint64_t* time) {
+Result StreamIn::getCapturePositionImpl(audio_stream_in_t* stream, bool hasCapturePosition,
+                                        uint64_t* frames, uint64_t* time) {
     // HAL may have a stub function, always returning ENOSYS, don't
     // spam the log in this case.
     static const std::vector<int> ignoredErrors{ENOSYS};
     Result retval(Result::NOT_SUPPORTED);
-    if (stream->get_capture_position == NULL) return retval;
+    if (!hasCapturePosition) return retval;
     int64_t halFrames, halTime;
     retval = Stream::analyzeStatus("get_capture_position",
                                    stream->get_capture_position(stream, &halFrames, &halTime),
@@ -485,7 +510,7 @@ Result StreamIn::getCapturePositionImpl(audio_stream_in_t* stream, uint64_t* fra
 
 Return<void> StreamIn::getCapturePosition(getCapturePosition_cb _hidl_cb) {
     uint64_t frames = 0, time = 0;
-    Result retval = getCapturePositionImpl(mStream, &frames, &time);
+    Result retval = getCapturePositionImpl(mStream, mHasCapturePosition, &frames, &time);
     _hidl_cb(retval, frames, time);
     return Void();
 }
