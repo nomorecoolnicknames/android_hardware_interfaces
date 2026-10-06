@@ -16,6 +16,8 @@
 
 #define LOG_TAG "ConsumerIrService"
 
+#include <vector>
+
 #include <log/log.h>
 
 #include <hardware/hardware.h>
@@ -35,7 +37,13 @@ ConsumerIr::ConsumerIr(consumerir_device_t *device) {
 
 // Methods from ::android::hardware::consumerir::V1_0::IConsumerIr follow.
 Return<bool> ConsumerIr::transmit(int32_t carrierFreq, const hidl_vec<int32_t>& pattern) {
-    return mDevice->transmit(mDevice, carrierFreq, pattern.data(), pattern.size()) == 0;
+    // The legacy module gets a private, writable copy. pattern.data() points into
+    // the received hwbinder buffer, which is mapped read-only in this process, and
+    // MediaTek's libconsumerir_core.so (Meizu MX6) rewrites the pattern in place:
+    // signals_generate faulted with SEGV_ACCERR on the first transmit, the HAL died
+    // and system_server aborted on the dead binder (2026-10-06).
+    std::vector<int> copy(pattern.begin(), pattern.end());
+    return mDevice->transmit(mDevice, carrierFreq, copy.data(), copy.size()) == 0;
 }
 
 Return<void> ConsumerIr::getCarrierFreqs(getCarrierFreqs_cb _hidl_cb) {
