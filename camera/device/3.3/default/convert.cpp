@@ -15,6 +15,7 @@
  */
 
 #define LOG_TAG "android.hardware.camera.device@3.3-convert-impl"
+#include <cutils/properties.h>
 #include <log/log.h>
 
 #include "include/convert.h"
@@ -35,6 +36,21 @@ void convertToHidl(const Camera3Stream* src, HalStream* dst) {
     dst->v3_2.id = src->mId;
     dst->v3_2.overrideFormat = (PixelFormat) src->format;
     dst->v3_2.maxBuffers = src->max_buffers;
+    // Off unless set (Meizu MX6): the MediaTek
+    // HAL3 answers max_buffers = 1 for a RAW16 output, so with Google Camera's
+    // ZSL request (preview + RAW16 4032x3016 on every frame) only one request
+    // can be in flight and the session runs at 3 fps while the sensor delivers
+    // 16.6 and the CPUs sit idle. persist.camera.raw_maxbuf=N
+    // advertises N to the framework instead; whether the HAL really copes with
+    // N RAW buffers outstanding is exactly what the experiment measures.
+    if (src->format == HAL_PIXEL_FORMAT_RAW16) {
+        int32_t want = property_get_int32("persist.camera.raw_maxbuf", 0);
+        if (want > (int32_t)src->max_buffers && want <= 8) {
+            ALOGI("%s: RAW16 stream %d maxBuffers %u -> %d (persist.camera.raw_maxbuf)",
+                  __FUNCTION__, src->mId, src->max_buffers, want);
+            dst->v3_2.maxBuffers = want;
+        }
+    }
     if (src->stream_type == CAMERA3_STREAM_OUTPUT) {
         dst->v3_2.consumerUsage = (BufferUsageFlags)0;
         dst->v3_2.producerUsage = (BufferUsageFlags)src->usage;
