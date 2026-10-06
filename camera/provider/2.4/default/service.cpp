@@ -25,6 +25,7 @@
 #include <cutils/properties.h>
 #include <hidl/LegacySupport.h>
 #include <malloc.h>
+#include <signal.h>
 
 using android::status_t;
 using android::hardware::defaultLazyPassthroughServiceImplementation;
@@ -40,6 +41,11 @@ const bool kLazyService = false;
 int main()
 {
     ALOGI("CameraProvider@2.4 legacy service is starting.");
+    // A dumpsys reader that closes its end early (`dumpsys media.camera | grep -m1`)
+    // made the HAL's dump write() raise SIGPIPE and init restarted the whole
+    // provider, dropping every open camera (Meizu MX6, 2026-10-02 and 2026-10-06,
+    // "received signal 13"). With SIGPIPE ignored the write just fails with EPIPE.
+    signal(SIGPIPE, SIG_IGN);
     // The camera HAL may communicate to other vendor components via
     // /dev/vndbinder
     android::ProcessState::initWithDriver("/dev/vndbinder");
