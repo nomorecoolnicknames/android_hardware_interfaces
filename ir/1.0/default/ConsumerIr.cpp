@@ -43,7 +43,12 @@ Return<bool> ConsumerIr::transmit(int32_t carrierFreq, const hidl_vec<int32_t>& 
     // signals_generate faulted with SEGV_ACCERR on the first transmit, the HAL died
     // and system_server aborted on the dead binder (2026-10-06).
     std::vector<int> copy(pattern.begin(), pattern.end());
-    return mDevice->transmit(mDevice, carrierFreq, copy.data(), copy.size()) == 0;
+    // Success is "not negative": the same blob returns what write() to /dev/irtx
+    // returned -- the byte count -- after a complete transmission (consumerir
+    // .mt6797 transmit epilogue returns the write result; 2026-10-06 the LED path
+    // ran its full 170 ms and the service still logged "Error transmitting: -1").
+    // Nougat's ConsumerIrService treated only negative values as errors.
+    return mDevice->transmit(mDevice, carrierFreq, copy.data(), copy.size()) >= 0;
 }
 
 Return<void> ConsumerIr::getCarrierFreqs(getCarrierFreqs_cb _hidl_cb) {
